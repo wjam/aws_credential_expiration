@@ -1,4 +1,4 @@
-PACKAGE := github.com/wjam/aws_credential_expiration
+PACKAGE := $(shell head -n 1 go.mod | cut -d' ' -f2)
 
 .DEFAULT_GOAL := all
 .PHONY := clean all fmt linux mac windows coverage release build
@@ -11,8 +11,6 @@ mac_suffix := -darwin-amd64
 mac_bins := $(addsuffix $(mac_suffix),$(addprefix $(release_dir),$(commands)))
 linux_suffix := -linux-amd64
 linux_bins := $(addsuffix $(linux_suffix),$(addprefix $(release_dir),$(commands)))
-windows_suffix := -windows-amd64.exe
-windows_bins := $(addsuffix $(windows_suffix),$(addprefix $(release_dir),$(commands)))
 
 clean:
 	# Removing all generated files...
@@ -55,6 +53,18 @@ coverage: bin/.coverage.out
 $(local_bins): bin/.fmtcheck bin/.vet bin/.coverage.out $(go_files)
 	go build -trimpath -o $@ $(PACKAGE)/cmd/$(basename $(@F))
 
+$(mac_bins): bin/.fmtcheck bin/.vet bin/.coverage.out $(go_files)
+	GOOS=darwin GOARCH=amd64 go build -trimpath -o $@ $(PACKAGE)/cmd/$(basename $(subst $(mac_suffix),,$(@F)))
+
+$(linux_bins): bin/.fmtcheck bin/.vet bin/.coverage.out $(go_files)
+	GOOS=linux GOARCH=amd64 go build -trimpath -o $@ $(PACKAGE)/cmd/$(basename $(subst $(linux_suffix),,$(@F)))
+
+$(windows_bins): bin/.fmtcheck bin/.vet bin/.coverage.out $(go_files)
+	GOOS=windows GOARCH=amd64 go build -trimpath -o $@ $(PACKAGE)/cmd/$(basename $(subst $(windows_suffix),,$(@F)))
+
+linux: $(linux_bins)
+windows: $(windows_bins)
+mac: $(mac_bins)
 build: $(local_bins)
 
 all: build
