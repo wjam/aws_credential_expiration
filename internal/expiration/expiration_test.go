@@ -136,8 +136,8 @@ aws_expiration=2020-09-27T16:31:59.000Z
 	systray.Test(t)
 	systray.On("SetIcon", green).Return()
 	systray.On("SetTooltip", `Current
-uat -> 11m1s
-dev -> 23h46m59s`).Return()
+dev -> 23h46m59s
+uat -> 11m1s`).Return()
 
 	err = subject.UpdateIconWithExpiration()
 	require.NoError(t, err)
