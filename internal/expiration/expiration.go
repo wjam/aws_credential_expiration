@@ -2,6 +2,7 @@ package expiration
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -125,7 +126,7 @@ func (c *credentialStatus) String() string {
 	var lines []string
 	if c.HasExpired() {
 		lines = append(lines, "Expired")
-		for k := range c.expired {
+		for _, k := range ordered(c.expired) {
 			lines = append(lines, k)
 		}
 		if c.HasExpiring() {
@@ -135,7 +136,8 @@ func (c *credentialStatus) String() string {
 
 	if c.HasExpiring() {
 		lines = append(lines, "Expiring")
-		for k, v := range c.expiring {
+		for _, k := range ordered(c.expiring) {
+			v := c.expiring[k]
 			lines = append(lines, fmt.Sprintf("%s -> %s", k, v))
 		}
 		if c.HasCurrent() {
@@ -145,10 +147,20 @@ func (c *credentialStatus) String() string {
 
 	if c.HasCurrent() {
 		lines = append(lines, "Current")
-		for k, v := range c.current {
+		for _, k := range ordered(c.current) {
+			v := c.current[k]
 			lines = append(lines, fmt.Sprintf("%s -> %s", k, v))
 		}
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func ordered(m map[string]time.Duration) []string {
+	var keys []string
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
