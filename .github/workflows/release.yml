@@ -44,7 +44,7 @@ jobs:
             target: linux
             binary: linux
           - os: macos-latest
-            make: mac
+            target: mac
             binary: darwin
 
     runs-on: ${{ matrix.config.os }}
@@ -58,7 +58,7 @@ jobs:
           go-version: 1.15
       - uses: actions/checkout@v1
       - name: make
-        run: make ${{ matrix.config.make }}
+        run: make ${{ matrix.config.target }}
       - uses: actions/upload-release-asset@v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
