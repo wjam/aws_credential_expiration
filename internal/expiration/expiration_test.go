@@ -109,17 +109,17 @@ func TestExpiration_UpdateIconWithExpiration_allCurrent(t *testing.T) {
 aws_access_key_id=123456
 aws_secret_access_key=8765432
 foo=bar
-aws_expiration=2020-09-25T16:44:59.000Z
+aws_expiration=2020-09-25T16:44:59.250Z
 
 [uat]
 aws_access_key_id=asdfg
 aws_secret_access_key=jhgfd
-aws_expiration=2020-09-26T16:56:01.000Z
+aws_expiration=2020-09-26T16:56:01.100Z
 
 [dev]
 aws_access_key_id=987654
 aws_secret_access_key=2345678
-aws_expiration=2020-09-27T16:31:59.000Z
+aws_expiration=2020-09-27T16:31:59.300Z
 `), 0644)
 	require.NoError(t, err)
 

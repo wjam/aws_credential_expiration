@@ -22,6 +22,9 @@ type Expiration struct {
 	amberIcon []byte
 	greenIcon []byte
 
+	obsolete time.Duration
+	expiring time.Duration
+
 	file string
 }
 
@@ -37,6 +40,8 @@ func newExpirationWithTime(file string, systray Systray, red []byte, amber []byt
 		greenIcon: green,
 		file:      file,
 		now:       now,
+		obsolete:  -1 * 8 * time.Hour,
+		expiring:  10 * time.Minute,
 	}
 }
 
@@ -84,12 +89,12 @@ func (e *Expiration) expiringProfiles(credentials *ini.File) (*credentialStatus,
 			}
 
 			now := e.now()
-			if expiration.Before(now.Add(-1 * 24 * time.Hour)) {
+			if expiration.Before(now.Add(e.obsolete)) {
 				// So old to not be of concern
 				continue
 			} else if expiration.Before(now) {
 				expired[section.Name()] = expiration.Sub(now)
-			} else if expiration.Before(now.Add(10 * time.Minute)) {
+			} else if expiration.Before(now.Add(e.expiring)) {
 				expiring[section.Name()] = expiration.Sub(now)
 			} else {
 				current[section.Name()] = expiration.Sub(now)
@@ -138,7 +143,7 @@ func (c *credentialStatus) String() string {
 		lines = append(lines, "Expiring")
 		for _, k := range ordered(c.expiring) {
 			v := c.expiring[k]
-			lines = append(lines, fmt.Sprintf("%s -> %s", k, v))
+			lines = append(lines, fmt.Sprintf("%s -> %s", k, v.Truncate(time.Second)))
 		}
 		if c.HasCurrent() {
 			lines = append(lines, "")
@@ -149,7 +154,7 @@ func (c *credentialStatus) String() string {
 		lines = append(lines, "Current")
 		for _, k := range ordered(c.current) {
 			v := c.current[k]
-			lines = append(lines, fmt.Sprintf("%s -> %s", k, v))
+			lines = append(lines, fmt.Sprintf("%s -> %s", k, v.Truncate(time.Second)))
 		}
 	}
 
