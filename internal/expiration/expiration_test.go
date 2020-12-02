@@ -6,9 +6,53 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
+
+func TestConcat_joinsItemsCorrectly(t *testing.T) {
+	actual := concat([]string{"one", "two", "four"})
+	assert.Equal(t, "four, one and two", actual)
+}
+
+func TestExpiration_notificationOnlySentFirstTime(t *testing.T) {
+	dir := t.TempDir()
+
+	file := filepath.Join(dir, "credentials")
+	err := ioutil.WriteFile(file, []byte(`
+[prod]
+aws_access_key_id=123456
+aws_secret_access_key=8765432
+foo=bar
+aws_expiration=2020-09-26T16:31:59.000Z
+`), 0644)
+	require.NoError(t, err)
+
+	systray := new(mockedSystray)
+	notify := new(mockNotify)
+	subject := newExpirationWithTime(
+		file,
+		systray,
+		notify,
+		red,
+		amber,
+		green,
+		constantTime(time.Date(2020, 9, 26, 16, 22, 0, 0, time.UTC)),
+	)
+
+	systray.Test(t)
+	systray.On("SetIcon", mock.Anything).Return()
+	systray.On("SetTooltip", mock.Anything).Return()
+
+	subject.previous = expiringState
+	err = subject.UpdateIconWithExpiration()
+	require.NoError(t, err)
+
+	systray.AssertExpectations(t)
+	notify.AssertExpectations(t)
+}
 
 func TestExpiration_UpdateIconWithExpiration_onlyExpiring(t *testing.T) {
 	dir := t.TempDir()
@@ -34,9 +78,11 @@ aws_expiration=2020-09-27T16:31:59.000Z
 	require.NoError(t, err)
 
 	systray := new(mockedSystray)
+	notify := new(mockNotify)
 	subject := newExpirationWithTime(
 		file,
 		systray,
+		notify,
 		red,
 		amber,
 		green,
@@ -52,10 +98,15 @@ uat -> 1s
 Current
 dev -> 24h9m59s`).Return()
 
+	notify.Test(t)
+	notify.On("Push", "prod and uat profiles are about to expire").Return(nil)
+
 	err = subject.UpdateIconWithExpiration()
 	require.NoError(t, err)
+	assert.Equal(t, expiringState, subject.previous)
 
 	systray.AssertExpectations(t)
+	notify.AssertExpectations(t)
 }
 
 func TestExpiration_UpdateIconWithExpiration_expiringAndExpired(t *testing.T) {
@@ -77,9 +128,11 @@ aws_expiration=2020-09-26T16:31:59.000Z
 	require.NoError(t, err)
 
 	systray := new(mockedSystray)
+	notify := new(mockNotify)
 	subject := newExpirationWithTime(
 		file,
 		systray,
+		notify,
 		red,
 		amber,
 		green,
@@ -94,10 +147,15 @@ dev
 Expiring
 prod -> 2m59s`).Return()
 
+	notify.Test(t)
+	notify.On("Push", "dev profile has expired").Return(nil)
+
 	err = subject.UpdateIconWithExpiration()
 	require.NoError(t, err)
+	assert.Equal(t, expiredState, subject.previous)
 
 	systray.AssertExpectations(t)
+	notify.AssertExpectations(t)
 }
 
 func TestExpiration_UpdateIconWithExpiration_allCurrent(t *testing.T) {
@@ -124,9 +182,11 @@ aws_expiration=2020-09-27T16:31:59.300Z
 	require.NoError(t, err)
 
 	systray := new(mockedSystray)
+	notify := new(mockNotify)
 	subject := newExpirationWithTime(
 		file,
 		systray,
+		notify,
 		red,
 		amber,
 		green,
@@ -141,8 +201,10 @@ uat -> 11m1s`).Return()
 
 	err = subject.UpdateIconWithExpiration()
 	require.NoError(t, err)
+	assert.Equal(t, currentState, subject.previous)
 
 	systray.AssertExpectations(t)
+	notify.AssertExpectations(t)
 }
 
 var red = []byte{0x01}
@@ -161,6 +223,17 @@ func (m *mockedSystray) SetIcon(bytes []byte) {
 
 func (m *mockedSystray) SetTooltip(s string) {
 	m.Called(s)
+}
+
+var _ Notify = &mockNotify{}
+
+type mockNotify struct {
+	mock.Mock
+}
+
+func (m *mockNotify) Push(s string) error {
+	args := m.Called(s)
+	return args.Error(0)
 }
 
 func constantTime(t time.Time) func() time.Time {

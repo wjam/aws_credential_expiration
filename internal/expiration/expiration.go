@@ -14,8 +14,13 @@ type Systray interface {
 	SetTooltip(string)
 }
 
+type Notify interface {
+	Push(string) error
+}
+
 type Expiration struct {
 	systray Systray
+	notify  Notify
 	now     func() time.Time
 
 	redIcon   []byte
@@ -25,16 +30,27 @@ type Expiration struct {
 	obsolete time.Duration
 	expiring time.Duration
 
+	previous state
+
 	file string
 }
 
-func NewExpiration(file string, systray Systray, red []byte, amber []byte, green []byte) Expiration {
-	return newExpirationWithTime(file, systray, red, amber, green, time.Now)
+type state int
+
+const (
+	currentState state = iota
+	expiringState
+	expiredState
+)
+
+func NewExpiration(file string, systray Systray, notify Notify, red []byte, amber []byte, green []byte) Expiration {
+	return newExpirationWithTime(file, systray, notify, red, amber, green, time.Now)
 }
 
-func newExpirationWithTime(file string, systray Systray, red []byte, amber []byte, green []byte, now func() time.Time) Expiration {
+func newExpirationWithTime(file string, systray Systray, notify Notify, red []byte, amber []byte, green []byte, now func() time.Time) Expiration {
 	return Expiration{
 		systray:   systray,
+		notify:    notify,
 		redIcon:   red,
 		amberIcon: amber,
 		greenIcon: green,
@@ -58,13 +74,26 @@ func (e *Expiration) UpdateIconWithExpiration() error {
 
 	if status.HasExpired() {
 		e.systray.SetIcon(e.redIcon)
+		if e.previous != expiredState {
+			if err := e.notify.Push(status.Expired()); err != nil {
+				return err
+			}
+			e.previous = expiredState
+		}
 	} else if status.HasExpiring() {
 		e.systray.SetIcon(e.amberIcon)
+		if e.previous != expiringState {
+			if err := e.notify.Push(status.Expiring()); err != nil {
+				return err
+			}
+			e.previous = expiringState
+		}
 	} else {
 		e.systray.SetIcon(e.greenIcon)
+		e.previous = currentState
 	}
 
-	e.systray.SetTooltip(status.String())
+	e.systray.SetTooltip(status.ToolTip())
 
 	return nil
 }
@@ -127,7 +156,25 @@ func (c *credentialStatus) HasExpired() bool {
 	return len(c.expired) != 0
 }
 
-func (c *credentialStatus) String() string {
+func (c credentialStatus) Expired() string {
+	var profiles []string
+	for name := range c.expired {
+		profiles = append(profiles, name)
+	}
+
+	return notifyMessage(profiles, "profile has expired", "profiles have expired")
+}
+
+func (c credentialStatus) Expiring() string {
+	var profiles []string
+	for name := range c.expiring {
+		profiles = append(profiles, name)
+	}
+
+	return notifyMessage(profiles, "profile is about to expire", "profiles are about to expire")
+}
+
+func (c *credentialStatus) ToolTip() string {
 	var lines []string
 	if c.HasExpired() {
 		lines = append(lines, "Expired")
@@ -159,6 +206,30 @@ func (c *credentialStatus) String() string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func notifyMessage(profiles []string, singular string, plural string) string {
+	if len(profiles) > 1 {
+		return fmt.Sprintf("%s %s", concat(profiles), plural)
+	}
+	return fmt.Sprintf("%s %s", concat(profiles), singular)
+}
+
+func concat(parts []string) string {
+	sort.Strings(parts)
+
+	s := new(strings.Builder)
+	for i, part := range parts {
+		if s.Len() != 0 {
+			if i == len(parts)-1 {
+				s.WriteString(" and ")
+			} else {
+				s.WriteString(", ")
+			}
+		}
+		s.WriteString(part)
+	}
+	return s.String()
 }
 
 func ordered(m map[string]time.Duration) []string {

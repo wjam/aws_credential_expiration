@@ -23,7 +23,7 @@ func main() {
 }
 
 func ready(file string, t *time.Ticker) func() {
-	e := expiration.NewExpiration(file, &tray{}, redIcon, amberIcon, greenIcon)
+	e := expiration.NewExpiration(file, &tray{}, &notify{}, redIcon, amberIcon, greenIcon)
 
 	return func() {
 		err := e.UpdateIconWithExpiration()
