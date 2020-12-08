@@ -3,11 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
-	"time"
-
-	"github.com/wjam/aws_credential_expiration/internal/expiration"
 
 	"github.com/getlantern/systray"
+	"github.com/wjam/aws_credential_expiration/internal/expiration"
 )
 
 //go:generate go run generate.go
@@ -18,29 +16,19 @@ func main() {
 		panic(err)
 	}
 
-	t := time.NewTicker(10 * time.Second)
-	systray.Run(ready(file, t), exit(t))
-}
+	u := newUpdate()
 
-func ready(file string, t *time.Ticker) func() {
-	e := expiration.NewExpiration(file, &tray{}, &notify{}, redIcon, amberIcon, greenIcon)
+	e := expiration.NewExpiration(file, u.update)
 
-	return func() {
-		err := e.UpdateIconWithExpiration()
-		if err != nil {
+	systray.Run(func() {
+		if err := e.WatchCredentialsFile(); err != nil {
 			panic(err)
 		}
-
-		for {
-			select {
-			case <-t.C:
-				err := e.UpdateIconWithExpiration()
-				if err != nil {
-					panic(err)
-				}
-			}
+	}, func() {
+		if err := e.Close(); err != nil {
+			panic(err)
 		}
-	}
+	})
 }
 
 func credentialsFile() (string, error) {
@@ -56,9 +44,3 @@ func credentialsFile() (string, error) {
 }
 
 var osUserHomeDir = os.UserHomeDir
-
-func exit(t *time.Ticker) func() {
-	return func() {
-		t.Stop()
-	}
-}
