@@ -1,242 +1,148 @@
 package expiration
 
 import (
-	"fmt"
-	"sort"
-	"strings"
+	"log"
 	"time"
 
+	"github.com/fsnotify/fsnotify"
 	"gopkg.in/ini.v1"
 )
 
-type Systray interface {
-	SetIcon([]byte)
-	SetTooltip(string)
+func NewExpiration(path string, update Update) *Expiration {
+	return &Expiration{
+		path:   path,
+		update: update,
+		fin:    make(chan error, 1),
+	}
 }
 
-type Notify interface {
-	Push(string) error
-}
+type Update func(expired map[string]time.Time, expiring map[string]time.Time, current map[string]time.Time) error
 
 type Expiration struct {
-	systray Systray
-	notify  Notify
-	now     func() time.Time
+	path string
+	fin  chan error
 
-	redIcon   []byte
-	amberIcon []byte
-	greenIcon []byte
-
-	obsolete time.Duration
-	expiring time.Duration
-
-	previous state
-
-	file string
+	creds  credentials
+	update Update
 }
 
-type state int
-
-const (
-	currentState state = iota
-	expiringState
-	expiredState
-)
-
-func NewExpiration(file string, systray Systray, notify Notify, red []byte, amber []byte, green []byte) Expiration {
-	return newExpirationWithTime(file, systray, notify, red, amber, green, time.Now)
-}
-
-func newExpirationWithTime(file string, systray Systray, notify Notify, red []byte, amber []byte, green []byte, now func() time.Time) Expiration {
-	return Expiration{
-		systray:   systray,
-		notify:    notify,
-		redIcon:   red,
-		amberIcon: amber,
-		greenIcon: green,
-		file:      file,
-		now:       now,
-		obsolete:  -1 * 8 * time.Hour,
-		expiring:  10 * time.Minute,
+func (e *Expiration) WatchCredentialsFile() error {
+	w, err := fsnotify.NewWatcher()
+	if err != nil {
+		return err
 	}
-}
-
-func (e *Expiration) UpdateIconWithExpiration() error {
-	credentials, err := e.loadCredentials()
+	err = w.Add(e.path)
 	if err != nil {
 		return err
 	}
 
-	status, err := e.expiringProfiles(credentials)
-	if err != nil {
+	closeChan := make(chan bool, 1)
+
+	go func() {
+
+		// Trigger once to ensure the tooltip is updated
+		timers, err := e.nextEvent(nil)
+		if err != nil {
+			e.fin <- err
+			return
+		}
+
+		for {
+			select {
+			case event := <-w.Events:
+				if event.Op&fsnotify.Write == fsnotify.Write {
+					timers, err = e.nextEvent(timers)
+
+					if err != nil {
+						e.fin <- err
+						return
+					}
+				}
+			case <-closeChan:
+				for _, timer := range timers {
+					timer.Stop()
+				}
+				_ = w.Close()
+				return
+			}
+		}
+	}()
+	select {
+	case err := <-e.fin:
+		closeChan <- true
 		return err
 	}
+}
 
-	if status.HasExpired() {
-		e.systray.SetIcon(e.redIcon)
-		if e.previous != expiredState {
-			if err := e.notify.Push(status.Expired()); err != nil {
-				return err
-			}
-			e.previous = expiredState
-		}
-	} else if status.HasExpiring() {
-		e.systray.SetIcon(e.amberIcon)
-		if e.previous != expiringState {
-			if err := e.notify.Push(status.Expiring()); err != nil {
-				return err
-			}
-			e.previous = expiringState
-		}
-	} else {
-		e.systray.SetIcon(e.greenIcon)
-		e.previous = currentState
-	}
-
-	e.systray.SetTooltip(status.ToolTip())
-
+func (e Expiration) Close() error {
+	e.fin <- nil
 	return nil
 }
 
-func (e *Expiration) loadCredentials() (*ini.File, error) {
-	return ini.Load(e.file)
+func (e Expiration) nextEvent(previous []Stoppable) ([]Stoppable, error) {
+	err := e.updateCredentials()
+	if err != nil {
+		return nil, err
+	}
+
+	durs := e.nextEvents()
+
+	e.triggerUpdate()
+
+	var timers []Stoppable
+	for _, timer := range durs {
+		log.Printf("Event will trigger after %s", timer)
+		timers = append(timers, time.AfterFunc(timer, e.triggerUpdate))
+	}
+
+	// Make sure the previous timers can be GCed
+	for _, timer := range previous {
+		timer.Stop()
+	}
+
+	return timers, nil
 }
 
-func (e *Expiration) expiringProfiles(credentials *ini.File) (*credentialStatus, error) {
-	expired := map[string]time.Duration{}
-	expiring := map[string]time.Duration{}
-	current := map[string]time.Duration{}
-	for _, section := range credentials.Sections() {
+func (e *Expiration) triggerUpdate() {
+	expired, expiring, current := e.creds.groupProfilesByExpiration(now())
+	err := e.update(expired, expiring, current)
+	if err != nil {
+		e.fin <- err
+	}
+}
+
+func (e *Expiration) updateCredentials() error {
+	f, err := ini.Load(e.path)
+	if err != nil {
+		return err
+	}
+	creds := credentials{}
+	for _, section := range f.Sections() {
 		if section.HasKey("aws_expiration") {
 			key, err := section.GetKey("aws_expiration")
 			if err != nil {
-				return nil, err
+				return err
 			}
 			expiration, err := key.TimeFormat(time.RFC3339)
 			if err != nil {
-				return nil, err
+				return err
 			}
 
-			now := e.now()
-			if expiration.Before(now.Add(e.obsolete)) {
-				// So old to not be of concern
-				continue
-			} else if expiration.Before(now) {
-				expired[section.Name()] = expiration.Sub(now)
-			} else if expiration.Before(now.Add(e.expiring)) {
-				expiring[section.Name()] = expiration.Sub(now)
-			} else {
-				current[section.Name()] = expiration.Sub(now)
-			}
+			creds[section.Name()] = profile{expiration}
 		}
 	}
 
-	return &credentialStatus{
-		expired:  expired,
-		expiring: expiring,
-		current:  current,
-	}, nil
+	e.creds = creds
+	log.Printf("Updated credentials: %v", e.creds)
+	return nil
 }
 
-type credentialStatus struct {
-	expired  map[string]time.Duration
-	expiring map[string]time.Duration
-	current  map[string]time.Duration
+func (e Expiration) nextEvents() []time.Duration {
+	return e.creds.nextExpiration(now())
 }
 
-func (c *credentialStatus) HasCurrent() bool {
-	return len(c.current) != 0
-}
+var now = time.Now
 
-func (c *credentialStatus) HasExpiring() bool {
-	return len(c.expiring) != 0
-}
-
-func (c *credentialStatus) HasExpired() bool {
-	return len(c.expired) != 0
-}
-
-func (c credentialStatus) Expired() string {
-	var profiles []string
-	for name := range c.expired {
-		profiles = append(profiles, name)
-	}
-
-	return notifyMessage(profiles, "profile has expired", "profiles have expired")
-}
-
-func (c credentialStatus) Expiring() string {
-	var profiles []string
-	for name := range c.expiring {
-		profiles = append(profiles, name)
-	}
-
-	return notifyMessage(profiles, "profile is about to expire", "profiles are about to expire")
-}
-
-func (c *credentialStatus) ToolTip() string {
-	var lines []string
-	if c.HasExpired() {
-		lines = append(lines, "Expired")
-		for _, k := range ordered(c.expired) {
-			lines = append(lines, k)
-		}
-		if c.HasExpiring() {
-			lines = append(lines, "")
-		}
-	}
-
-	if c.HasExpiring() {
-		lines = append(lines, "Expiring")
-		for _, k := range ordered(c.expiring) {
-			v := c.expiring[k]
-			lines = append(lines, fmt.Sprintf("%s -> %s", k, v.Truncate(time.Second)))
-		}
-		if c.HasCurrent() {
-			lines = append(lines, "")
-		}
-	}
-
-	if c.HasCurrent() {
-		lines = append(lines, "Current")
-		for _, k := range ordered(c.current) {
-			v := c.current[k]
-			lines = append(lines, fmt.Sprintf("%s -> %s", k, v.Truncate(time.Second)))
-		}
-	}
-
-	return strings.Join(lines, "\n")
-}
-
-func notifyMessage(profiles []string, singular string, plural string) string {
-	if len(profiles) > 1 {
-		return fmt.Sprintf("%s %s", concat(profiles), plural)
-	}
-	return fmt.Sprintf("%s %s", concat(profiles), singular)
-}
-
-func concat(parts []string) string {
-	sort.Strings(parts)
-
-	s := new(strings.Builder)
-	for i, part := range parts {
-		if s.Len() != 0 {
-			if i == len(parts)-1 {
-				s.WriteString(" and ")
-			} else {
-				s.WriteString(", ")
-			}
-		}
-		s.WriteString(part)
-	}
-	return s.String()
-}
-
-func ordered(m map[string]time.Duration) []string {
-	var keys []string
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+type Stoppable interface {
+	Stop() bool
 }

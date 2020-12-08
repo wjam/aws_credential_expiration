@@ -1,243 +1,198 @@
 package expiration
 
 import (
+	"fmt"
 	"io/ioutil"
+	"log"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
-
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-func TestConcat_joinsItemsCorrectly(t *testing.T) {
-	actual := concat([]string{"one", "two", "four"})
-	assert.Equal(t, "four, one and two", actual)
-}
-
-func TestExpiration_notificationOnlySentFirstTime(t *testing.T) {
+func TestExpiration_WatchCredentialsFile_closesOnErrorInUpdate(t *testing.T) {
 	dir := t.TempDir()
-
-	file := filepath.Join(dir, "credentials")
-	err := ioutil.WriteFile(file, []byte(`
-[prod]
-aws_access_key_id=123456
-aws_secret_access_key=8765432
-foo=bar
-aws_expiration=2020-09-26T16:31:59.000Z
-`), 0644)
-	require.NoError(t, err)
-
-	systray := new(mockedSystray)
-	notify := new(mockNotify)
-	subject := newExpirationWithTime(
-		file,
-		systray,
-		notify,
-		red,
-		amber,
-		green,
-		constantTime(time.Date(2020, 9, 26, 16, 22, 0, 0, time.UTC)),
-	)
-
-	systray.Test(t)
-	systray.On("SetIcon", mock.Anything).Return()
-	systray.On("SetTooltip", mock.Anything).Return()
-
-	subject.previous = expiringState
-	err = subject.UpdateIconWithExpiration()
-	require.NoError(t, err)
-
-	systray.AssertExpectations(t)
-	notify.AssertExpectations(t)
-}
-
-func TestExpiration_UpdateIconWithExpiration_onlyExpiring(t *testing.T) {
-	dir := t.TempDir()
-
-	file := filepath.Join(dir, "credentials")
-	err := ioutil.WriteFile(file, []byte(`
-[prod]
-aws_access_key_id=123456
-aws_secret_access_key=8765432
-foo=bar
-aws_expiration=2020-09-26T16:31:59.000Z
-
-[uat]
-aws_access_key_id=asdfg
-aws_secret_access_key=jhgfd
-aws_expiration=2020-09-26T16:22:01.000Z
-
-[dev]
+	path := filepath.Join(dir, "temp.ini")
+	err := ioutil.WriteFile(path, []byte(`
+[initial_expired]
 aws_access_key_id=987654
 aws_secret_access_key=2345678
-aws_expiration=2020-09-27T16:31:59.000Z
-`), 0644)
+aws_expiration=2020-12-01T12:31:00.000Z
+`), 0600)
 	require.NoError(t, err)
 
-	systray := new(mockedSystray)
-	notify := new(mockNotify)
-	subject := newExpirationWithTime(
-		file,
-		systray,
-		notify,
-		red,
-		amber,
-		green,
-		constantTime(time.Date(2020, 9, 26, 16, 22, 0, 0, time.UTC)),
-	)
+	subject := NewExpiration(path, func(expired map[string]time.Time, expiring map[string]time.Time, current map[string]time.Time) error {
+		return nil
+	})
 
-	systray.Test(t)
-	systray.On("SetIcon", amber).Return()
-	systray.On("SetTooltip", `Expiring
-prod -> 9m59s
-uat -> 1s
-
-Current
-dev -> 24h9m59s`).Return()
-
-	notify.Test(t)
-	notify.On("Push", "prod and uat profiles are about to expire").Return(nil)
-
-	err = subject.UpdateIconWithExpiration()
-	require.NoError(t, err)
-	assert.Equal(t, expiringState, subject.previous)
-
-	systray.AssertExpectations(t)
-	notify.AssertExpectations(t)
-}
-
-func TestExpiration_UpdateIconWithExpiration_expiringAndExpired(t *testing.T) {
-	dir := t.TempDir()
-
-	file := filepath.Join(dir, "credentials")
-	err := ioutil.WriteFile(file, []byte(`
-[prod]
-aws_access_key_id=123456
-aws_secret_access_key=8765432
-foo=bar
-aws_expiration=2020-09-26T16:47:59.000Z
-
-[dev]
+	go func() {
+		defer func() {
+			err := subject.Close()
+			require.NoError(t, err)
+		}()
+		time.Sleep(1 * time.Second)
+		err = ioutil.WriteFile(path, []byte(`
+[invalid_expiration_date]
 aws_access_key_id=987654
 aws_secret_access_key=2345678
-aws_expiration=2020-09-26T16:31:59.000Z
-`), 0644)
-	require.NoError(t, err)
+aws_expiration=2020-12-1T12:50:02.000Z
+`), 0600)
+		require.NoError(t, err)
+		// Wait some time for the parsing to happen and fail rather than trigger the defer block immediately
+		time.Sleep(1 * time.Second)
+	}()
 
-	systray := new(mockedSystray)
-	notify := new(mockNotify)
-	subject := newExpirationWithTime(
-		file,
-		systray,
-		notify,
-		red,
-		amber,
-		green,
-		constantTime(time.Date(2020, 9, 26, 16, 45, 0, 0, time.UTC)),
-	)
-
-	systray.Test(t)
-	systray.On("SetIcon", red).Return()
-	systray.On("SetTooltip", `Expired
-dev
-
-Expiring
-prod -> 2m59s`).Return()
-
-	notify.Test(t)
-	notify.On("Push", "dev profile has expired").Return(nil)
-
-	err = subject.UpdateIconWithExpiration()
-	require.NoError(t, err)
-	assert.Equal(t, expiredState, subject.previous)
-
-	systray.AssertExpectations(t)
-	notify.AssertExpectations(t)
+	err = subject.WatchCredentialsFile()
+	assert.Error(t, err)
 }
 
-func TestExpiration_UpdateIconWithExpiration_allCurrent(t *testing.T) {
+func TestExpiration_WatchCredentialsFile_closesOnErrorInInit(t *testing.T) {
 	dir := t.TempDir()
-
-	file := filepath.Join(dir, "credentials")
-	err := ioutil.WriteFile(file, []byte(`
-[prod]
-aws_access_key_id=123456
-aws_secret_access_key=8765432
-foo=bar
-aws_expiration=2020-09-25T16:44:59.250Z
-
-[uat]
-aws_access_key_id=asdfg
-aws_secret_access_key=jhgfd
-aws_expiration=2020-09-26T16:56:01.100Z
-
-[dev]
+	path := filepath.Join(dir, "temp.ini")
+	err := ioutil.WriteFile(path, []byte(`
+[initial_expired]
 aws_access_key_id=987654
 aws_secret_access_key=2345678
-aws_expiration=2020-09-27T16:31:59.300Z
-`), 0644)
+aws_expiration=2020-12-1T12:31:00.000Z
+`), 0600)
 	require.NoError(t, err)
 
-	systray := new(mockedSystray)
-	notify := new(mockNotify)
-	subject := newExpirationWithTime(
-		file,
-		systray,
-		notify,
-		red,
-		amber,
-		green,
-		constantTime(time.Date(2020, 9, 26, 16, 45, 0, 0, time.UTC)),
-	)
+	subject := NewExpiration(path, func(expired map[string]time.Time, expiring map[string]time.Time, current map[string]time.Time) error {
+		return nil
+	})
 
-	systray.Test(t)
-	systray.On("SetIcon", green).Return()
-	systray.On("SetTooltip", `Current
-dev -> 23h46m59s
-uat -> 11m1s`).Return()
+	go func() {
+		// Wait some time for the parsing to happen and fail rather than trigger the defer block immediately
+		time.Sleep(1 * time.Second)
+		defer func() {
+			err := subject.Close()
+			require.NoError(t, err)
+		}()
+	}()
 
-	err = subject.UpdateIconWithExpiration()
-	require.NoError(t, err)
-	assert.Equal(t, currentState, subject.previous)
-
-	systray.AssertExpectations(t)
-	notify.AssertExpectations(t)
+	err = subject.WatchCredentialsFile()
+	assert.Error(t, err)
 }
 
-var red = []byte{0x01}
-var amber = []byte{0x02}
-var green = []byte{0x03}
-
-var _ Systray = &mockedSystray{}
-
-type mockedSystray struct {
-	mock.Mock
-}
-
-func (m *mockedSystray) SetIcon(bytes []byte) {
-	m.Called(bytes)
-}
-
-func (m *mockedSystray) SetTooltip(s string) {
-	m.Called(s)
-}
-
-var _ Notify = &mockNotify{}
-
-type mockNotify struct {
-	mock.Mock
-}
-
-func (m *mockNotify) Push(s string) error {
-	args := m.Called(s)
-	return args.Error(0)
-}
-
-func constantTime(t time.Time) func() time.Time {
-	return func() time.Time {
-		return t
+func TestExpiration_WatchCredentialsFile(t *testing.T) {
+	now = func() time.Time {
+		return time.Date(2020, time.December, 1, 12, 50, 0, 0, time.UTC)
 	}
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "temp.ini")
+	err := ioutil.WriteFile(path, []byte(`
+[initial_expired]
+aws_access_key_id=987654
+aws_secret_access_key=2345678
+aws_expiration=2020-12-01T12:31:00.000Z
+`), 0600)
+	require.NoError(t, err)
+
+	var actual []event
+	subject := NewExpiration(path, func(expired map[string]time.Time, expiring map[string]time.Time, current map[string]time.Time) error {
+		actual = append(actual, event{
+			expired:  expired,
+			expiring: expiring,
+			current:  current,
+		})
+		return nil
+	})
+	go func() {
+		defer func() {
+			err := subject.Close()
+			require.NoError(t, err)
+		}()
+		// Update triggered from initial read of credentials file
+		assert.Eventually(t, func() bool {
+			return containsEventWithExpired(actual, 0, "initial_expired")
+		}, 1*time.Second, 10*time.Millisecond)
+		err = ioutil.WriteFile(path, []byte(`
+[updated_expiring]
+aws_access_key_id=987654
+aws_secret_access_key=2345678
+aws_expiration=2020-12-01T12:50:02.000Z
+
+[updated_current]
+aws_access_key_id=987654
+aws_secret_access_key=2345678
+aws_expiration=2020-12-01T13:50:10.000Z
+`), 0600)
+		require.NoError(t, err)
+
+		// Update triggered from credentials file being updated
+		assert.Eventually(t, func() bool {
+			return containsEventWithCurrent(actual, 1, "updated_current")
+		}, 1*time.Second, 10*time.Millisecond)
+		assert.Eventually(t, func() bool {
+			return containsEventWithExpiring(actual, 1, "updated_expiring")
+		}, 1*time.Second, 10*time.Millisecond)
+
+		// Update triggered from expiring profile becoming expired
+		now = func() time.Time {
+			return time.Date(2020, time.December, 1, 12, 50, 2, 0, time.UTC)
+		}
+		assert.Eventually(t, func() bool {
+			return containsEventWithExpired(actual, 2, "updated_expiring")
+		}, 10*time.Second, 10*time.Millisecond)
+	}()
+
+	err = subject.WatchCredentialsFile()
+	require.NoError(t, err)
+
+	assert.Len(t, actual, 3)
+}
+
+func containsEventWithCurrent(events []event, expectedIndex int, expectedName string) bool {
+	if len(events) != expectedIndex+1 {
+		return false
+	}
+	e := events[expectedIndex]
+	for name := range e.current {
+		if name == expectedName {
+			return true
+		}
+	}
+	log.Printf("event current is %s", e)
+	return false
+}
+
+func containsEventWithExpiring(events []event, expectedIndex int, expectedName string) bool {
+	if len(events) != expectedIndex+1 {
+		return false
+	}
+	e := events[expectedIndex]
+	for name := range e.expiring {
+		if name == expectedName {
+			return true
+		}
+	}
+	log.Printf("event expiring is %s", e)
+	return false
+}
+
+func containsEventWithExpired(events []event, expectedIndex int, expectedName string) bool {
+	if len(events) != expectedIndex+1 {
+		return false
+	}
+	e := events[expectedIndex]
+	for name := range events[expectedIndex].expired {
+		if name == expectedName {
+			return true
+		}
+	}
+	log.Printf("event expired is %s", e)
+	return false
+}
+
+type event struct {
+	expired  map[string]time.Time
+	expiring map[string]time.Time
+	current  map[string]time.Time
+}
+
+func (e event) String() string {
+	return fmt.Sprintf("current: %s, expiring: %s, expired: %s", e.current, e.expiring, e.expired)
 }
