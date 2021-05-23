@@ -15,11 +15,11 @@ type update struct {
 }
 
 func newUpdate() *update {
-	notify := notificator.New(notificator.Options{
+	n := notificator.New(notificator.Options{
 		AppName: "aws_credential_expiration",
 	})
 	return &update{
-		notify: notify,
+		notify: n,
 		tray:   systray.NewTray(),
 	}
 }
