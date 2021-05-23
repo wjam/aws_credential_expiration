@@ -1,6 +1,7 @@
 package main
 
 import (
+	_ "embed"
 	"fmt"
 	"os"
 
@@ -8,7 +9,14 @@ import (
 	"github.com/wjam/aws_credential_expiration/internal/expiration"
 )
 
-//go:generate go run generate.go
+//go:embed red.png
+var redIcon []byte
+
+//go:embed amber.png
+var amberIcon []byte
+
+//go:embed green.png
+var greenIcon []byte
 
 func main() {
 	file, err := credentialsFile()

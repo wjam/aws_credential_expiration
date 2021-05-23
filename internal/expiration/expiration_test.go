@@ -125,10 +125,10 @@ aws_expiration=2020-12-01T13:50:10.000Z
 		// Update triggered from credentials file being updated
 		assert.Eventually(t, func() bool {
 			return containsEventWithCurrent(actual, 1, "updated_current")
-		}, 1*time.Second, 10*time.Millisecond)
+		}, 2*time.Second, 10*time.Millisecond)
 		assert.Eventually(t, func() bool {
 			return containsEventWithExpiring(actual, 1, "updated_expiring")
-		}, 1*time.Second, 10*time.Millisecond)
+		}, 2*time.Second, 10*time.Millisecond)
 
 		// Update triggered from expiring profile becoming expired
 		now = func() time.Time {
@@ -142,7 +142,7 @@ aws_expiration=2020-12-01T13:50:10.000Z
 	err = subject.WatchCredentialsFile()
 	require.NoError(t, err)
 
-	assert.Len(t, actual, 3)
+	assert.GreaterOrEqualf(t, len(actual), 3, "received %#v", actual)
 }
 
 func containsEventWithCurrent(events []event, expectedIndex int, expectedName string) bool {
