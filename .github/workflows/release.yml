@@ -13,7 +13,7 @@ jobs:
       - uses: actions/setup-go@v2
         with:
           go-version: 1.15
-      - uses: actions/checkout@v2.3.4
+      - uses: actions/checkout@v2.4.0
       - name: make
         run: make
 
@@ -56,7 +56,7 @@ jobs:
       - uses: actions/setup-go@v2
         with:
           go-version: 1.15
-      - uses: actions/checkout@v2.3.4
+      - uses: actions/checkout@v2.4.0
       - name: make
         run: make ${{ matrix.config.target }}
       - uses: actions/upload-release-asset@v1.0.2
