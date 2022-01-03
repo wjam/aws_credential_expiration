@@ -1,22 +1,12 @@
 package main
 
 import (
-	_ "embed"
 	"fmt"
 	"os"
 
 	"github.com/getlantern/systray"
 	"github.com/wjam/aws_credential_expiration/internal/expiration"
 )
-
-//go:embed red.png
-var redIcon []byte
-
-//go:embed amber.png
-var amberIcon []byte
-
-//go:embed green.png
-var greenIcon []byte
 
 func main() {
 	file, err := credentialsFile()
