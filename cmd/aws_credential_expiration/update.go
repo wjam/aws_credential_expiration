@@ -1,12 +1,22 @@
 package main
 
 import (
+	_ "embed"
 	"time"
 
 	"github.com/wjam/aws_credential_expiration/internal/systray"
 
 	"github.com/0xAX/notificator"
 )
+
+//go:embed red.png
+var redIcon []byte
+
+//go:embed amber.png
+var amberIcon []byte
+
+//go:embed green.png
+var greenIcon []byte
 
 type update struct {
 	previousState state
