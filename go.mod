@@ -8,6 +8,6 @@ require (
 	github.com/getlantern/systray v0.0.0-20200324212034-d3ab4fd25d99
 	github.com/smartystreets/goconvey v1.6.4 // indirect
 	github.com/stretchr/testify v1.7.0
-	golang.org/x/tools v0.1.4
+	golang.org/x/tools v0.1.9
 	gopkg.in/ini.v1 v1.62.0
 )
