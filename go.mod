@@ -4,7 +4,7 @@ go 1.16
 
 require (
 	github.com/0xAX/notificator v0.0.0-20191016112426-3962a5ea8da1
-	github.com/fsnotify/fsnotify v1.5.0
+	github.com/fsnotify/fsnotify v1.5.2
 	github.com/getlantern/systray v0.0.0-20200324212034-d3ab4fd25d99
 	github.com/smartystreets/goconvey v1.6.4 // indirect
 	github.com/stretchr/testify v1.7.0
